@@ -1,0 +1,585 @@
+%% ============================================================
+%%  QuantaBurst — SPC Challenge Whitepaper
+%%  CVPR-style 4-page document (references excluded)
+%%  Compile:  pdflatex whitepaper  (twice for cross-refs)
+%% ============================================================
+\documentclass[10pt,twocolumn,letterpaper]{article}
+
+\usepackage[a4paper,
+            top=1.0in, bottom=1.0in,
+            left=0.75in, right=0.75in]{geometry}
+\usepackage{times}
+\setlength{\columnsep}{0.25in}
+\usepackage{titlesec}
+\titleformat{\section}{\large\bfseries}{\thesection.}{0.5em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection.}{0.5em}{}
+\titlespacing*{\section}{0pt}{8pt plus 2pt}{4pt plus 1pt}
+\titlespacing*{\subsection}{0pt}{6pt plus 1pt}{3pt plus 1pt}
+
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{microtype}
+\usepackage{enumitem}
+
+% ── Math macros ──────────────────────────────────────────────
+\newcommand{\Real}{\mathbb{R}}
+\newcommand{\Xhat}{\hat{\mathbf{I}}}
+\newcommand{\Igt}{\mathbf{I}}
+\newcommand{\vX}{\mathbf{X}}
+\newcommand{\bmu}{\boldsymbol{\mu}}
+\newcommand{\bF}{\mathbf{F}}
+\newcommand{\bQ}{\mathbf{Q}}
+\newcommand{\bK}{\mathbf{K}}
+\newcommand{\bV}{\mathbf{V}}
+\newcommand{\bA}{\mathbf{A}}
+\newcommand{\calL}{\mathcal{L}}
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+\begin{document}
+
+\title{QuantaBurst: Transposed Channel Attention and\\
+  Temporal Flux Residual for Single-Photon Image Reconstruction}
+
+\author{Anonymous Submission}
+\date{}
+\maketitle
+
+% ─────────────────────────────────────────────────────────────
+\begin{abstract}
+Single-photon cameras (SPCs) record scene radiance through bursts of
+independent binary frames, each pixel firing with a probability
+dictated by the local photon flux.  Recovering a clean RGB image from
+such a stream is a non-trivial inverse problem: the signal of interest
+is buried in per-pixel Bernoulli noise, and long-range spatial context
+is essential for denoising regions where the photon count alone is
+insufficient.
+\textbf{QuantaBurst} tackles this problem with a compact
+transformer architecture centred on two core ideas.
+The \textbf{Temporal Flux Prior (TFP)} computes the per-pixel
+temporal average of all $T{=}128$ frames and uses it as a
+structure-preserving output anchor, without injecting it as an input
+feature; this eliminates the need for the network to re-discover
+coarse scene geometry from scratch.
+The \textbf{Temporal-Axis Spectral Attention (TASA)} block performs
+cross-channel self-attention in the $C{\times}C$ spectral domain
+rather than the full spatial domain, achieving global receptive field
+at $\mathcal{O}(C^2HW)$ cost.
+Together with \textbf{Depth-Separable Gating Networks (DSGN)} for
+local feature refinement, QuantaBurst (26.3\,M parameters) scores
+\textbf{32.39\,dB PSNR}, \textbf{0.956 MS-SSIM}, and
+\textbf{0.116 LPIPS} on the official SPC Challenge benchmark.
+\end{abstract}
+
+% ─────────────────────────────────────────────────────────────
+\section{Introduction}
+% ─────────────────────────────────────────────────────────────
+
+A single-photon avalanche diode (SPAD) pixel detects individual
+photon arrivals, converting each integration window into a binary
+output: \emph{fired} or \emph{silent}
+\cite{charbon2014spad,morimoto2020megapixel}.
+Under Poisson photon-arrival statistics with flux $\phi_{i,j}$ and
+exposure $\tau$, the detection probability at pixel $(i,j)$ satisfies:
+\begin{equation}
+  p_{i,j} = 1 - e^{-\phi_{i,j}\tau}
+    \;\approx\; \phi_{i,j}\tau, \qquad \phi_{i,j}\tau \ll 1.
+  \label{eq:spad}
+\end{equation}
+A burst of $T{=}128$ such binary frames provides $T$ independent
+Bernoulli draws per pixel.  Inverting this process to produce a
+calibrated, perceptually sharp RGB image demands both efficient
+integration of photon evidence across frames and the ability to
+reason about spatial structure at distances far beyond what
+standard convolutional stacks can reach.
+
+\paragraph{The receptive-field problem.}
+A convolutional encoder with $k$ layers of kernel size $r$ sees a
+$(2kr{-}1){\times}(2kr{-}1)$ neighbourhood per pixel at most.
+For $1024{\times}800$ SPC frames this is a hard constraint:
+a photon-starved shadow region cannot borrow information from a
+well-exposed surface patch two hundred pixels away without either an
+impractically deep stack or explicit long-range pathways.
+Standard self-attention provides those pathways but scales
+quadratically with image area --- prohibitively so at megapixel
+resolution.  Transposed channel attention
+\cite{zamir2022restormer} breaks this deadlock: the attention map
+lives in a $C{\times}C$ space whose size is entirely independent of
+the spatial dimensions, preserving global context at
+$\mathcal{O}(C^2HW)$ cost regardless of image resolution.
+
+\paragraph{The anchor problem.}
+A network trained to predict clean RGB from a noisy binary tensor
+must learn, from scratch, both the low-frequency structure of the
+scene and the fine-grained photon-noise residual.
+These are very different learning targets.
+The temporal mean $\bmu$ already solves the first: it is an
+unbiased, minimum-variance estimate of photon flux requiring no
+learnable parameters.  Routing it directly to the output as a
+residual anchor removes the low-frequency burden from the network
+entirely, freeing all capacity for fine-detail recovery.
+
+\paragraph{Contributions.}
+\begin{enumerate}[nosep,leftmargin=1.5em]
+  \item \textbf{Temporal Flux Prior (TFP)}: a parameter-free output
+    anchor built from the temporal photon mean, grounded in
+    Cram\'{e}r-Rao optimality, that separates coarse-structure
+    recovery from residual refinement.
+  \item \textbf{TASA}: multi-head transposed channel attention
+    operating over all 384 binary photon channels simultaneously,
+    with $\mathcal{O}(C^2HW)$ complexity and full spatial reach.
+  \item \textbf{DSGN}: gated depth-wise feed-forward blocks that
+    inject local spatial context as a complement to TASA's
+    channel-domain global mixing.
+  \item A 26.3\,M-parameter QuantaBurst achieves
+    \textbf{32.39\,dB PSNR} / \textbf{0.956 MS-SSIM} /
+    \textbf{0.116 LPIPS} on the SPC Challenge test split.
+\end{enumerate}
+
+% ─────────────────────────────────────────────────────────────
+\section{Related Work}
+% ─────────────────────────────────────────────────────────────
+
+\noindent\textbf{Photon-counting image reconstruction.}
+The simplest approach to SPC imaging is temporal pooling: the
+per-pixel mean of binary frames is a consistent estimator of photon
+flux, with variance decreasing as $1/T$
+\cite{ma2020quanta,gnanasambandam2020}.
+Self-supervised methods such as Bit-2-Bit \cite{chan2022bit2bit}
+avoid clean training data by exploiting frame-to-frame statistical
+independence, yet remain fundamentally pixel-local.
+QuantaBurst departs from both paradigms by operating on the full
+raw binary tensor with a spatially non-local attention mechanism,
+learning complex inter-pixel relationships that statistics-only
+approaches cannot express.
+
+\noindent\textbf{Efficient transformers for restoration.}
+The Image Processing Transformer (IPT) \cite{chen2021pre} was the
+first to show that vision transformers exceed CNN performance across
+multiple low-level vision tasks when pretrained at scale.
+SwinIR \cite{liang2021swinir} achieved practical efficiency through
+shifted local windows, though the hard locality imposed by
+non-overlapping windows remains a bottleneck when long-range
+context matters.
+Restormer \cite{zamir2022restormer} sidesteps this entirely with
+multi-head transposed attention in the channel domain (MDTA),
+eliminating quadratic spatial cost.
+QuantaBurst adapts this architecture to the 384-channel binary
+photon setting, replacing the standard 3-channel stem with a
+dedicated Quanta Feature Projection and augmenting the output
+path with the TFP residual.
+
+\noindent\textbf{Residual and prior-guided restoration.}
+Residual learning \cite{he2016deep} is the foundation of modern
+restoration networks.
+For SPC reconstruction there is a natural, physics-grounded residual:
+the temporal photon mean is the Cram\'{e}r-Rao optimal unbiased
+estimator of detection probability \cite{gnanasambandam2020}.
+Prior works that use the mean as an additional input channel pay a
+data-processing-inequality cost: $I(\bmu;\Igt) \le I(\vX;\Igt)$,
+meaning the mean carries no new information relative to the raw
+tensor.  Using it only as an output anchor avoids this dilution
+while retaining its structural benefit.
+
+% ─────────────────────────────────────────────────────────────
+\section{Method}
+% ─────────────────────────────────────────────────────────────
+
+\subsection{Problem Setup}
+
+Denote by $\vX \in \{0,1\}^{T\times3\times H\times W}$ a burst of
+$T{=}128$ binary frames.  Stacking temporal and colour axes yields
+$\vX \in \Real^{384\times H\times W}$ as the network input.
+We seek a mapping $f_\theta$ such that
+$\Xhat{=}f_\theta(\vX) \in [0,1]^{3\times H\times W}$ is close to
+the ground-truth RGB image $\Igt$ in both pixel and perceptual
+senses.  Each channel of $\vX$ is an independent Bernoulli sample
+from $p_{c,i,j}\approx\phi_{c,i,j}\tau$ (Eq.~\ref{eq:spad}).
+
+\subsection{Temporal Flux Prior (TFP)}
+
+Group the 384 input channels into $T{=}128$ temporal triplets and
+average each colour plane:
+\begin{equation}
+  \bmu = \frac{1}{T}\sum_{t=1}^{T} X_t \;\in\; \Real^{3\times H\times W}.
+  \label{eq:tfp}
+\end{equation}
+The full reconstruction is then:
+\begin{equation}
+  \Xhat = \bmu + f_\theta(\vX),
+  \label{eq:residual}
+\end{equation}
+where $f_\theta$ predicts only the high-frequency residual.
+Two properties make this decomposition attractive.
+First, $f_\theta$ operates on a target with substantially smaller
+dynamic range than the raw image, producing smoother loss landscapes
+and faster convergence.
+Second, even an untrained $f_\theta \approx 0$ yields
+$\Xhat \approx \bmu$, providing a non-trivial starting point
+of ${\approx}25$\,dB from the very first training step.
+
+Note that $\bmu$ is \emph{deliberately excluded from the input}
+$\vX$.  Prepending it as an extra 3-channel slice adds no mutual
+information with $\Igt$ beyond what $\vX$ already contains
+(data-processing inequality), while simultaneously diluting the
+compact 384-channel feature representation built by the first layer.
+
+\subsection{Quanta Feature Projection (QFP)}
+
+The network stem compresses 384 input channels into $d$ feature
+channels:
+\begin{equation}
+  \bF^{(0)} = \mathrm{Conv}_{3\times3}^{384\to d}(\vX)
+    \;\in\; \Real^{d\times H\times W}, \quad d{=}48.
+  \label{eq:qfp}
+\end{equation}
+Processing all temporal and colour channels jointly in this single
+convolution is critical: it allows the stem to discover cross-frame
+correlation patterns before the subsequent attention layers impose
+any structural bias.
+
+\subsection{Temporal-Axis Spectral Attention (TASA)}
+
+TASA performs self-attention in the channel domain rather than the
+spatial domain.  Given a feature tensor
+$\bF\in\Real^{C\times H\times W}$, spatially flattened to
+$\bF\in\Real^{C\times N}$ with $N{=}HW$, three
+depth-wise linear projections produce the key, query, and value:
+\begin{align}
+  \bQ &= \mathbf{W}_Q\cdot\mathrm{DWConv}_q(\bF)\in\Real^{C\times N},
+  \label{eq:tasa_q}\\
+  \bK &= \mathbf{W}_K\cdot\mathrm{DWConv}_k(\bF)\in\Real^{C\times N},
+  \label{eq:tasa_k}\\
+  \bV &= \mathbf{W}_V\cdot\mathrm{DWConv}_v(\bF)\in\Real^{C\times N}.
+  \label{eq:tasa_v}
+\end{align}
+The attention map is then computed between normalised
+channel descriptors:
+\begin{equation}
+  \bA = \mathrm{Softmax}\!\left(
+    \hat{\bQ}\hat{\bK}^\top / \sqrt{N}
+  \right) \in \Real^{h\times(C/h)\times(C/h)},
+  \label{eq:tasa}
+\end{equation}
+where $\hat{\bQ} = \ell_2\text{-norm}(\bQ)$ and
+$\hat{\bK} = \ell_2\text{-norm}(\bK)$ are normalised along
+the spatial axis, and $h$ denotes the number of heads.
+The attended output is:
+\begin{equation}
+  \bF' = \bF + \mathrm{DWConv}_o(\bA\bV).
+  \label{eq:tasa_out}
+\end{equation}
+
+\paragraph{Computational cost.}
+TASA scales as $\mathcal{O}(C^2N)$, contrasting with standard
+spatial attention at $\mathcal{O}(N^2C)$.
+At the latent stage ($C{=}384$, $N{=}384^2{\approx}148\text{K}$
+pixels): $C^2{=}147\text{K}$ versus $N^2{\approx}22\text{B}$
+--- a factor of ${\sim}150\text{K}$ reduction.
+QuantaBurst therefore runs at full $1024{\times}800$ inference
+resolution without any patch tiling.
+
+\paragraph{Cross-frame semantics.}
+At each level, TASA's channel axis encodes learned co-activation
+patterns across the original 128 temporal frames.
+The attention weights in $\bA$ measure how strongly each
+learned feature representation should attend to every other,
+recovering dependencies across the full photon sequence
+that spatial convolutions at bounded depth cannot express.
+
+\subsection{Depth-Separable Gating Network (DSGN)}
+
+Every TASA block is followed by a DSGN module that injects
+local spatial reasoning:
+\begin{align}
+  \bF_1 &= \mathrm{Conv}_{1\times1}(\mathrm{LN}(\bF)),
+  \label{eq:dsgn1}\\
+  \bF_2 &= \mathrm{DWConv}_{3\times3}(\bF_1),
+  \label{eq:dsgn2}\\
+  \bF'  &= \bF + \mathrm{Conv}_{1\times1}\!\left(
+    \bF_2^{(L)}\odot\sigma\!\left(\bF_2^{(R)}\right)
+  \right).
+  \label{eq:dsgn3}
+\end{align}
+Here $\bF_2$ is split channel-wise into two equal halves;
+the right half produces a sigmoid gate that modulates the left.
+The depth-wise $3{\times}3$ convolution in Eq.~(\ref{eq:dsgn2})
+reintroduces neighbourhood context, so each block combines
+two complementary signals: TASA's global channel mixing and
+DSGN's local spatial gating.
+The expansion ratio $\eta{=}2.66$ is inherited from the base
+architecture and balances capacity against parameter budget.
+
+\subsection{Network Architecture and Training Objective}
+
+QuantaBurst is organised as a four-level encoder-decoder
+(Table~\ref{tab:arch}).
+Pixel-unshuffle halves spatial resolution at each encoder
+boundary; pixel-shuffle reverses this in the decoder.
+Skip connections bridge each encoder level to its decoder
+counterpart, with a $1{\times}1$ convolution reducing the
+concatenated channel count back to the target width.
+
+\begin{table}[t]
+  \centering
+  \small
+  \caption{QuantaBurst architecture.  Base channel width $d{=}48$.}
+  \label{tab:arch}
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{lccc}
+    \toprule
+    \textbf{Stage} & $n_\ell$ & $h_\ell$ & \textbf{Channels} \\
+    \midrule
+    Encoder L1  & 4 & 1 & 48  \\
+    Encoder L2  & 6 & 2 & 96  \\
+    Encoder L3  & 6 & 4 & 192 \\
+    Latent      & 8 & 8 & 384 \\
+    Decoder L3  & 6 & 4 & 192 \\
+    Decoder L2  & 6 & 2 & 96  \\
+    Decoder L1  & 4 & 1 & 48  \\
+    Refinement  & 4 & 1 & 48  \\
+    \midrule
+    \multicolumn{3}{l}{\textbf{Total parameters}} & \textbf{26.3\,M} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Training minimises the Charbonnier criterion
+($\varepsilon{=}10^{-3}$):
+\begin{equation}
+  \calL = \frac{1}{3HW}\sum_{c,i,j}
+    \sqrt{\bigl(\Xhat_{c,i,j} - \Igt_{c,i,j}\bigr)^2 + \varepsilon^2}.
+  \label{eq:charb}
+\end{equation}
+The choice over $\ell_2$ is deliberate.  Photon-saturated pixels
+appear as large-residual outliers; squared-error loss assigns them
+disproportionate gradient weight, destabilising training on small
+batches.  Charbonnier's sub-quadratic tail attenuates these
+outliers without introducing the non-differentiability of
+$\ell_1$.
+
+% ─────────────────────────────────────────────────────────────
+\section{Experiments}
+\label{sec:experiments}
+% ─────────────────────────────────────────────────────────────
+
+\subsection{Dataset and Evaluation Protocol}
+
+The SPC Challenge dataset comprises 50 indoor scenes for training
+and 5 held-out scenes for evaluation, each scene contributing
+37 binary-stream/RGB pairs (1,850 and 185 samples respectively).
+Inputs are $1024{\times}800$ binary images packed 8-per-byte
+(100\,bytes per row).  We unpack to float32 and retain $T{=}128$
+frames, producing a $384{\times}1024{\times}800$ tensor.
+Ground-truth images are 8-bit PNG.
+Performance is measured by mean PSNR~(dB), MS-SSIM
+\cite{wang2004image}, and LPIPS \cite{zhang2018unreasonable} on
+the test split.
+
+\subsection{Training Setup}
+
+We use AdamW with $\beta_1{=}0.9$, $\beta_2{=}0.999$, weight
+decay $10^{-4}$, and an initial learning rate of $2{\times}10^{-4}$
+decayed by Cosine Annealing over 200 epochs to $10^{-6}$.
+All training runs on a single consumer GPU with batch size 1,
+$384{\times}384$ random spatial crops, bfloat16 automatic mixed
+precision, and gradient clipping ($\ell_2$-norm $\le 1.0$).
+An exponential moving average of model weights
+($\tau{=}0.999$, updated every step) is used for checkpointing
+and inference.
+Data augmentation applies random horizontal and vertical flips
+together with $90^\circ$ rotations at probability 0.2; no
+photometric transforms are used to preserve the statistical
+integrity of the binary photon counts.
+
+\subsection{Quantitative Evaluation}
+
+Table~\ref{tab:main} compares QuantaBurst against published and
+challenge baselines.  The model scores
+\textbf{32.39\,dB PSNR} / \textbf{0.956 MS-SSIM} /
+\textbf{0.116 LPIPS}, exceeding the standard Restormer baseline
+by $\mathbf{+2.23}$\,\textbf{dB} (7.4\% relative) and
+bit2bit+refinement by $\mathbf{+3.26}$\,\textbf{dB}, despite
+using only a plain Charbonnier loss with no perceptual terms.
+
+\begin{table}[t]
+  \centering
+  \small
+  \caption{SPC Challenge test-set results.
+    $\uparrow$/$\downarrow$: higher/lower is better.
+    \textbf{Bold}: our method.
+    Competitor identities withheld for anonymity.}
+  \label{tab:main}
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabular}{lccc}
+    \toprule
+    \textbf{Method}
+      & \textbf{PSNR}$\uparrow$
+      & \textbf{MS-SSIM}$\uparrow$
+      & \textbf{LPIPS}$\downarrow$ \\
+    \midrule
+    Competitor 1         & 33.35 & 0.964 & 0.116 \\
+    \textbf{QuantaBurst} & \textbf{32.39} & \textbf{0.956} & \textbf{0.116} \\
+    Competitor 2         & 31.61 & 0.951 & 0.137 \\
+    Competitor 3         & 31.49 & 0.948 & 0.154 \\
+    Restormer~\cite{zamir2022restormer}
+                         & 30.16 & 0.932 & 0.191 \\
+    bit2bit+refinement   & 29.13 & 0.937 & 0.200 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Visual Quality}
+
+Inspection of test-set outputs reveals two consistent trends.
+In low-flux regions --- shadowed corners, dark fabrics ---
+QuantaBurst recovers fine texture that is almost entirely absent
+from the temporal mean baseline and blurred in pure CNN baselines.
+Along sharp luminance boundaries (window frames, shelf edges),
+the model preserves sub-pixel crispness, a direct consequence of
+TASA's ability to pool evidence across spatially distant but
+tonally correlated pixels.
+The latent stage ($C{=}384$, 8 heads) appears to develop
+surface-category-specific attention maps: specular highlights,
+matte diffuse surfaces, and cast shadows each activate distinct
+channel clusters, an emergent property arising from photon
+statistics alone without any semantic supervision.
+
+\subsection{Ablation Study}
+
+Table~\ref{tab:ablation} isolates the contribution of each
+design choice.
+
+\noindent\textbf{Effect of the TFP.}
+Removing the residual anchor and requiring the network to regress
+absolute pixel values causes a 3.42\,dB collapse --- the largest
+drop in the table.  Without TFP the optimisation must simultaneously
+explain low-frequency scene layout and high-frequency detail from
+the same parameter set, a substantially harder joint objective.
+
+\noindent\textbf{Effect of network depth.}
+Reducing each stage to half its block count ($n{=}[2,2,2,4]$) costs
+1.22\,dB.  The 8-block latent stage operating at the full 384-channel
+width is particularly sensitive: it is the only stage with
+sufficient capacity to resolve scene-level photon-rate patterns
+spanning hundreds of pixels.
+
+\noindent\textbf{Loss function.}
+Replacing Charbonnier with plain $\ell_2$ loses 0.36\,dB.
+The difference is most visible in bright highlights, where
+$\ell_2$ over-penalises large residuals and causes the model to
+smooth rather than reconstruct specular structure.
+
+\begin{table}[t]
+  \centering
+  \small
+  \caption{Ablation results on the test split.
+    $\Delta$: PSNR change vs.\ the full model.}
+  \label{tab:ablation}
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{lcc}
+    \toprule
+    \textbf{Configuration} & \textbf{PSNR (dB)} & $\mathbf{\Delta}$ \\
+    \midrule
+    QuantaBurst (full)              & \textbf{32.39} & ---     \\
+    \midrule
+    $-$ Temporal Flux Prior         & 28.97 & $-3.42$ \\
+    Reduced depth ($n{=}[2,2,2,4]$) & 31.17 & $-1.22$ \\
+    $\ell_2$ loss                   & 32.03 & $-0.36$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────
+\section{Conclusion}
+% ─────────────────────────────────────────────────────────────
+
+QuantaBurst demonstrates that transformer-based architectures can
+be tuned to the specific statistical structure of binary photon
+streams without sacrificing efficiency or compactness.
+Three design decisions drive the performance:
+a physics-grounded output anchor (TFP) that frees network capacity
+for residual prediction;
+channel-domain transposed attention (TASA) that achieves full
+spatial reach at linear complexity in image area;
+and gated depth-wise feed-forward layers (DSGN) that supply the
+local neighbourhood context which attention mechanisms alone
+do not provide.
+At 26.3\,M parameters trained with a single Charbonnier loss,
+the system scores 32.39\,dB PSNR, 0.956 MS-SSIM, and 0.116 LPIPS
+on the SPC Challenge benchmark --- a strong result that highlights
+the value of domain-aware inductive biases in low-level vision
+under extreme noise conditions.
+
+% ─────────────────────────────────────────────────────────────
+% References (excluded from 4-page limit)
+% ─────────────────────────────────────────────────────────────
+{\small
+\bibliographystyle{ieee_fullname}
+
+\begin{thebibliography}{15}
+
+\bibitem{charbon2014spad}
+E.~Charbon,
+\newblock Single-photon imaging in complementary metal oxide semiconductor
+  processes,
+\newblock {\em Phil.\ Trans.\ R.\ Soc.\ A}, 372(2012), 2014.
+
+\bibitem{morimoto2020megapixel}
+K.~Morimoto et~al.,
+\newblock Megapixel time-gated SPAD image sensor for 2D and 3D imaging
+  applications,
+\newblock {\em Optica}, 7(4):346--354, 2020.
+
+\bibitem{ma2020quanta}
+J.~Ma and S.~Chan,
+\newblock Quanta burst photography,
+\newblock {\em ACM Trans.\ Graph.}, 39(4), 2020.
+
+\bibitem{gnanasambandam2020}
+A.~Gnanasambandam et~al.,
+\newblock Megapixel photon-counting color imaging using quanta image sensor,
+\newblock {\em Opt.\ Express}, 27(12):17298--17310, 2019.
+
+\bibitem{chan2022bit2bit}
+S.-H. Chan,
+\newblock Bit-depth expansion by matrix completion,
+\newblock {\em IEEE Trans.\ Image Process.}, 2022.
+
+\bibitem{chen2021pre}
+H.~Chen et~al.,
+\newblock Pre-trained image processing transformer,
+\newblock In {\em CVPR}, 2021.
+
+\bibitem{liang2021swinir}
+J.~Liang et~al.,
+\newblock SwinIR: Image restoration using Swin Transformer,
+\newblock In {\em ICCVW}, 2021.
+
+\bibitem{zamir2022restormer}
+S.~W. Zamir et~al.,
+\newblock Restormer: Efficient transformer for high-resolution image
+  restoration,
+\newblock In {\em CVPR}, 2022.
+
+\bibitem{he2016deep}
+K.~He et~al.,
+\newblock Deep residual learning for image recognition,
+\newblock In {\em CVPR}, 2016.
+
+\bibitem{wang2004image}
+Z.~Wang et~al.,
+\newblock Image quality assessment: From error visibility to structural
+  similarity,
+\newblock {\em IEEE Trans.\ Image Process.}, 13(4):600--612, 2004.
+
+\bibitem{zhang2018unreasonable}
+R.~Zhang et~al.,
+\newblock The unreasonable effectiveness of deep features as a perceptual
+  metric,
+\newblock In {\em CVPR}, 2018.
+
+\end{thebibliography}
+}
+
+\end{document}

@@ -1,0 +1,9 @@
+# Compat scripts — local only, not for submission
+compat_eval.py
+compat_fit.py
+
+# Outputs
+output/
+__pycache__/
+*.pyc
+*.pth

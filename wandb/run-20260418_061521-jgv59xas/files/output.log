@@ -1,0 +1,49 @@
+PhotonEventDataset [train]: 1850 samples from 50 scenes
+[model] QuantaBurst — 26.29M parameters on cuda
+[resume] best_model.pth  loaded 494/494 keys, 12 skipped (novel-module keys)
+/home/shashikant/anaconda3/envs/spc/lib/python3.10/site-packages/torch/optim/lr_scheduler.py:227: UserWarning: Detected call of `lr_scheduler.step()` before `optimizer.step()`. In PyTorch 1.1.0 and later, you should call them in the opposite order: `optimizer.step()` before `lr_scheduler.step()`.  Failure to do this will result in PyTorch skipping the first value of the learning rate schedule. See more details at https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
+  warnings.warn(
+[resume] cross-model checkpoint — optimizer reset, scheduler wound to epoch 80 (lr=1.31e-04), best_psnr=36.25 dB
+[resume] EMA: 494/494 keys loaded
+[train] epochs 80→200, 1850 samples, 1850 steps/epoch
+[train] Charbonnier-only, lr=0.0002, cosine T_max=200
+--------------------------------------------------------------------------------
+    ep 81 step   50/1850  loss 0.0243  psnr 31.52 dB  lr 1.31e-04
+    ep 81 step  100/1850  loss 0.0182  psnr 33.35 dB  lr 1.31e-04
+    ep 81 step  150/1850  loss 0.0159  psnr 34.04 dB  lr 1.31e-04
+    ep 81 step  200/1850  loss 0.0146  psnr 34.61 dB  lr 1.31e-04
+    ep 81 step  250/1850  loss 0.0139  psnr 34.91 dB  lr 1.31e-04
+    ep 81 step  300/1850  loss 0.0132  psnr 35.28 dB  lr 1.31e-04
+    ep 81 step  350/1850  loss 0.0129  psnr 35.34 dB  lr 1.31e-04
+Traceback (most recent call last):
+  File "/mnt/zone/A/QuantaBurst/fit.py", line 237, in <module>
+  File "/mnt/zone/A/QuantaBurst/fit.py", line 97, in update_ema
+    for k, v in model.state_dict().items():
+  File "/home/shashikant/anaconda3/envs/spc/lib/python3.10/site-packages/torch/nn/modules/module.py", line 2216, in state_dict
+    module.state_dict(
+  File "/home/shashikant/anaconda3/envs/spc/lib/python3.10/site-packages/torch/nn/modules/module.py", line 2216, in state_dict
+    module.state_dict(
+  File "/home/shashikant/anaconda3/envs/spc/lib/python3.10/site-packages/torch/nn/modules/module.py", line 2216, in state_dict
+    module.state_dict(
+  [Previous line repeated 2 more times]
+  File "/home/shashikant/anaconda3/envs/spc/lib/python3.10/site-packages/torch/nn/modules/module.py", line 2213, in state_dict
+    self._save_to_state_dict(destination, prefix, keep_vars)
+  File "/home/shashikant/anaconda3/envs/spc/lib/python3.10/site-packages/torch/nn/modules/module.py", line 2115, in _save_to_state_dict
+    destination[prefix + name] = param if keep_vars else param.detach()
+KeyboardInterrupt
+Traceback (most recent call last):
+  File "/mnt/zone/A/QuantaBurst/fit.py", line 237, in <module>
+  File "/mnt/zone/A/QuantaBurst/fit.py", line 97, in update_ema
+    for k, v in model.state_dict().items():
+  File "/home/shashikant/anaconda3/envs/spc/lib/python3.10/site-packages/torch/nn/modules/module.py", line 2216, in state_dict
+    module.state_dict(
+  File "/home/shashikant/anaconda3/envs/spc/lib/python3.10/site-packages/torch/nn/modules/module.py", line 2216, in state_dict
+    module.state_dict(
+  File "/home/shashikant/anaconda3/envs/spc/lib/python3.10/site-packages/torch/nn/modules/module.py", line 2216, in state_dict
+    module.state_dict(
+  [Previous line repeated 2 more times]
+  File "/home/shashikant/anaconda3/envs/spc/lib/python3.10/site-packages/torch/nn/modules/module.py", line 2213, in state_dict
+    self._save_to_state_dict(destination, prefix, keep_vars)
+  File "/home/shashikant/anaconda3/envs/spc/lib/python3.10/site-packages/torch/nn/modules/module.py", line 2115, in _save_to_state_dict
+    destination[prefix + name] = param if keep_vars else param.detach()
+KeyboardInterrupt
