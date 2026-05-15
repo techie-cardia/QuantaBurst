@@ -1,14 +1,8 @@
 """QuantaBurst — transposed channel-attention network for 384-channel single-photon input."""
-import importlib.util, torch, torch.nn as nn
+import torch
+import torch.nn as nn
 
-# Direct import of architecture file (avoids basicsr __init__ dependency chain)
-_spec = importlib.util.spec_from_file_location(
-    "_backbone_arch",
-    "/mnt/zone/A/external/Restormer/basicsr/models/archs/restormer_arch.py",
-)
-_mod = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_mod)
-_BackboneNet = _mod.Restormer
+from backbone import QuantaBackbone
 
 
 class QuantaBurst(nn.Module):
@@ -23,11 +17,11 @@ class QuantaBurst(nn.Module):
         super().__init__()
 
         # 384 channels fed directly — no lift bottleneck
-        self.trunk = _BackboneNet(
+        self.trunk = QuantaBackbone(
             inp_channels=384, out_channels=3, dim=48,
             num_blocks=[4, 6, 6, 8], num_refinement_blocks=4,
             heads=[1, 2, 4, 8], ffn_expansion_factor=2.66,
-            bias=False, LayerNorm_type="WithBias",
+            bias=False, layernorm_type="WithBias",
         )
 
     @staticmethod
